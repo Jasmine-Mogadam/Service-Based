@@ -5,7 +5,7 @@ import socket
 app = Flask(__name__)
 
 # Shared database
-db = Redis(host="shop_db", port=6379, decode_responses=True)
+db = Redis(host="shop-db", port=6379, decode_responses=True)
 
 # Balance key
 balance_key = "balance"
@@ -29,7 +29,7 @@ def get_balance():
         "service": "Money Service",
         "bounded_context": "Financial",
         "handled_by_instance": socket.gethostname(),
-        "database": "shop_db (Shared Redis)",
+        "database": "shop-db (Shared Redis)",
         "data": {balance_key: balance}
     })
 

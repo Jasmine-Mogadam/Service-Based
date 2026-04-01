@@ -2,25 +2,25 @@ services:
 
   # ── Application Services ────────────────────────────────────────────────
 
-  product_app:
+  product-app:
     build: ./product_service
     expose:
       - "5000"
     depends_on:
-      - shop_db
+      - shop-db
     environment:
       - FLASK_ENV=development
       - FLASK_DEBUG=1
     volumes:
       - ./product_service:/app   # hot-reload: file changes reflect immediately
 
-  order_app:
+  order-app:
     build: ./order_service
     expose:
       - "5000"
     depends_on:
-      - shop_db
-      - money_app
+      - shop-db
+      - money-app
       - ollama
     environment:
       - FLASK_ENV=development
@@ -28,12 +28,12 @@ services:
     volumes:
       - ./order_service:/app     # hot-reload: file changes reflect immediately
 
-  money_app:
+  money-app:
     build: ./money_service
     expose:
       - "5000"
     depends_on:
-      - shop_db
+      - shop-db
     environment:
       - FLASK_ENV=development
       - FLASK_DEBUG=1
@@ -42,7 +42,7 @@ services:
 
   # ── Shared Database ─────────────────────────────────────────────────────
 
-  shop_db:
+  shop-db:
     image: "redis:alpine"
     container_name: shop_shared_redis
     restart: always
@@ -65,7 +65,7 @@ services:
       start_period: 30s
 
   # One-shot container: waits for Ollama to be healthy, then pulls tinyllama
-  ollama_model_init:
+  ollama-model-init:
     image: ollama/ollama:latest
     depends_on:
       ollama:
@@ -84,9 +84,9 @@ services:
     ports:
       - "8080:80"
     depends_on:
-      - product_app
-      - order_app
-      - money_app
+      - product-app
+      - order-app
+      - money-app
 
 volumes:
   ollama_data:

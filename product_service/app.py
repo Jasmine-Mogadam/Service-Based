@@ -6,7 +6,7 @@ import requests
 app = Flask(__name__)
 
 # Shared database
-db = Redis(host="shop_db", port=6379, decode_responses=True)
+db = Redis(host="shop-db", port=6379, decode_responses=True)
 
 
 def seed_products_if_needed():
@@ -29,50 +29,60 @@ def get_products():
         "service": "Product Service",
         "bounded_context": "Inventory",
         "handled_by_instance": socket.gethostname(),
-        "database": "shop_db (Shared Redis)",
+        "database": "shop-db (Shared Redis)",
         "data": products,
     })
 
 
 @app.route("/reduce_stock", methods=["POST"])
 def reduce_stock():
-    seed_products_if_needed()
+    try:
+        seed_products_if_needed()
 
-    data = request.get_json()
-    sku = data.get("sku")
-    quantity = data.get("quantity", 1)
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"success": False, "message": "Invalid request body"}), 400
 
-    if not db.exists(sku):
-        return jsonify({"success": False, "message": "Product not found"}), 404
+        sku = data.get("sku")
+        quantity = data.get("quantity", 1)
 
-    current_stock = int(db.hget(sku, "stock"))
+        if not db.exists(sku):
+            return jsonify({"success": False, "message": "Product not found"}), 404
 
-    if current_stock <= 0:
-        return jsonify({"success": False, "message": "Out of Stock"}), 400
+        current_stock = int(db.hget(sku, "stock"))
 
-    # Read price from Redis — never trust client-supplied price
-    price = int(db.hget(sku, "price"))
-    total_cost = price * quantity
+        if current_stock <= 0:
+            return jsonify({"success": False, "message": "Out of Stock"}), 400
 
-    response = requests.post(
-        "http://money_app:5000/reduce_balance",
-        json={"amount": total_cost}
-    )
-    money_data = response.json()
+        # Read price from Redis — never trust client-supplied price
+        price = int(db.hget(sku, "price"))
+        total_cost = price * quantity
 
-    if not money_data["success"]:
-        return jsonify({"success": False, "message": money_data["message"]}), 400
+        try:
+            money_resp = requests.post(
+                "http://money-app:5000/reduce_balance",
+                json={"amount": total_cost}
+            )
+            money_data = money_resp.json()
+        except Exception as e:
+            return jsonify({"success": False, "message": f"Could not reach Money Service: {e}"}), 503
 
-    db.hincrby(sku, "stock", -quantity)
-    new_stock = current_stock - quantity
+        if not money_data["success"]:
+            return jsonify({"success": False, "message": money_data["message"]}), 400
 
-    return jsonify({
-        "success": True,
-        "product_name": db.hget(sku, "name"),
-        "new_stock": new_stock,
-        "price_paid": total_cost,
-        "new_balance": money_data["new_balance"],
-    })
+        db.hincrby(sku, "stock", -quantity)
+        new_stock = current_stock - quantity
+
+        return jsonify({
+            "success": True,
+            "product_name": db.hget(sku, "name"),
+            "new_stock": new_stock,
+            "price_paid": total_cost,
+            "new_balance": money_data["new_balance"],
+        })
+
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Product Service error: {e}"}), 500
 
 
 if __name__ == "__main__":

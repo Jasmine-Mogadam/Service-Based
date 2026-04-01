@@ -6,7 +6,7 @@ import requests
 app = Flask(__name__)
 
 # Shared database
-db = Redis(host="shop_db", port=6379, decode_responses=True)
+db = Redis(host="shop-db", port=6379, decode_responses=True)
 
 SKUS = ["sku:001", "sku:002", "sku:003"]
 
@@ -245,7 +245,7 @@ HTML_TEMPLATE = """
         <p>Microservice-Powered Electronics Store</p>
         <div class="chips">
             <span class="chip">Instance: {{ container_id }}</span>
-            <span class="chip">DB: shop_db (Shared Redis)</span>
+            <span class="chip">DB: shop-db (Shared Redis)</span>
         </div>
     </div>
 
@@ -433,11 +433,30 @@ def get_products_from_db():
     return products
 
 
+def get_products():
+    """Fetch products from the Product Service (seeds DB if needed), fall back to direct Redis read."""
+    try:
+        response = requests.get("http://product-app:5000/", timeout=5)
+        data = response.json().get("data", {})
+        products = []
+        for sku, p in data.items():
+            products.append({
+                "sku": sku,
+                "name": p.get("name", sku),
+                "stock": int(p.get("stock", 0)),
+                "price": p.get("price", "?"),
+                "icon": PRODUCT_ICONS.get(sku, "📦"),
+            })
+        return sorted(products, key=lambda x: x["sku"])
+    except Exception:
+        return get_products_from_db()
+
+
 @app.route("/")
 def index():
     logs = db.lrange("order_history", 0, 4)
     container_id = socket.gethostname()
-    products = get_products_from_db()
+    products = get_products()
 
     # Read balance directly from shared Redis — same DB, no HTTP round-trip needed
     raw = db.get("balance")
@@ -463,7 +482,7 @@ def submit_order():
 
     try:
         response = requests.post(
-            "http://product_app:5000/reduce_stock",
+            "http://product-app:5000/reduce_stock",
             json={"sku": sku, "quantity": 1}
         )
         data = response.json()
