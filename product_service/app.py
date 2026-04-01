@@ -1,18 +1,19 @@
 from flask import Flask, jsonify, request
 from redis import Redis
 import socket
+import requests
 
 app = Flask(__name__)
 
 # Shared database
-db = Redis(host="shop_db", port=6379, decode_responses=True)
+db = Redis(host="shop-db", port=6379, decode_responses=True)
 
 
 def seed_products_if_needed():
     if db.exists("sku:001") == 0:
-        db.hset("sku:001", mapping={"name": "iPhone 15 Pro", "stock": 10})
-        db.hset("sku:002", mapping={"name": "MacBook Air", "stock": 5})
-        db.hset("sku:003", mapping={"name": "Sony PS5", "stock": 20})
+        db.hset("sku:001", mapping={"name": "iPhone 15 Pro", "stock": 10, "price": 900})
+        db.hset("sku:002", mapping={"name": "MacBook Air", "stock": 5, "price": 1200})
+        db.hset("sku:003", mapping={"name": "Sony PS5", "stock": 20, "price": 500})
 
 
 @app.route("/")
@@ -28,34 +29,61 @@ def get_products():
         "service": "Product Service",
         "bounded_context": "Inventory",
         "handled_by_instance": socket.gethostname(),
-        "database": "shop_db (Shared Redis)",
+        "database": "shop-db (Shared Redis)",
         "data": products,
     })
 
 
 @app.route("/reduce_stock", methods=["POST"])
 def reduce_stock():
-    seed_products_if_needed()
+    try:
+        seed_products_if_needed()
 
-    data = request.get_json()
-    sku = data.get("sku")
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"success": False, "message": "Invalid request body"}), 400
 
-    if not db.exists(sku):
-        return jsonify({"success": False, "message": "Product not found"}), 404
+        sku = data.get("sku")
+        quantity = data.get("quantity", 1)
 
-    current_stock = int(db.hget(sku, "stock"))
+        if not db.exists(sku):
+            return jsonify({"success": False, "message": "Product not found"}), 404
 
-    if current_stock > 0:
-        db.hincrby(sku, "stock", -1)
-        new_stock = current_stock - 1
+        current_stock = int(db.hget(sku, "stock"))
+
+        if current_stock <= 0:
+            return jsonify({"success": False, "message": "Out of Stock"}), 400
+
+        # Read price from Redis — never trust client-supplied price
+        price = int(db.hget(sku, "price"))
+        total_cost = price * quantity
+
+        try:
+            money_resp = requests.post(
+                "http://money-app:5000/reduce_balance",
+                json={"amount": total_cost}
+            )
+            money_data = money_resp.json()
+        except Exception as e:
+            return jsonify({"success": False, "message": f"Could not reach Money Service: {e}"}), 503
+
+        if not money_data["success"]:
+            return jsonify({"success": False, "message": money_data["message"]}), 400
+
+        db.hincrby(sku, "stock", -quantity)
+        new_stock = current_stock - quantity
+
         return jsonify({
             "success": True,
             "product_name": db.hget(sku, "name"),
             "new_stock": new_stock,
+            "price_paid": total_cost,
+            "new_balance": money_data["new_balance"],
         })
-    else:
-        return jsonify({"success": False, "message": "Out of Stock"}), 400
+
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Product Service error: {e}"}), 500
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000, debug=True)
